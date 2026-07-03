@@ -1,0 +1,14 @@
+# Python
+__pycache__/
+*.pyc
+
+# Arduino build artifacts
+build/
+*.hex
+*.elf
+
+# Herramientas / entorno
+.claude/
+.playwright-mcp/
+*.log
+.DS_Store
