@@ -9,7 +9,7 @@
   ],
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 1,
+  "version": 2,
   "refresh": "5s",
   "time": {
     "from": "now-30m",
@@ -23,12 +23,12 @@
   },
   "panels": [
     {
-      "id": 1,
-      "type": "geomap",
-      "title": "Ultima posicion del collar",
+      "id": 10,
+      "type": "stat",
+      "title": "Estado del animal",
       "gridPos": {
-        "h": 10,
-        "w": 12,
+        "h": 4,
+        "w": 24,
         "x": 0,
         "y": 0
       },
@@ -43,65 +43,79 @@
             "type": "influxdb",
             "uid": "influxdb_ganado"
           },
-          "query": "SELECT last(\"lat\") AS \"latitude\", last(\"lon\") AS \"longitude\" FROM \"ganado\"",
+          "query": "SELECT last(\"fuera_zona\") + last(\"alerta_temp\") + last(\"inactivo\") AS \"alertas\" FROM \"ganado\"",
           "rawQuery": true,
           "resultFormat": "table"
         }
       ],
-      "options": {
-        "view": {
-          "id": "coords",
-          "lat": -41.13,
-          "lon": -71.31,
-          "zoom": 12
-        },
-        "controls": {
-          "showZoom": true,
-          "showAttribution": true
-        },
-        "basemap": {
-          "type": "default",
-          "name": "Layer 0"
-        },
-        "layers": [
-          {
-            "type": "markers",
-            "name": "Collar",
-            "location": {
-              "mode": "coords",
-              "latitude": "latitude",
-              "longitude": "longitude"
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "ANIMAL OK",
+                  "color": "green",
+                  "index": 0
+                }
+              }
             },
-            "config": {
-              "style": {
-                "color": {
-                  "fixed": "red"
-                },
-                "size": {
-                  "fixed": 8
-                },
-                "symbol": {
-                  "fixed": "img/icons/marker/circle.svg"
+            {
+              "type": "range",
+              "options": {
+                "from": 1,
+                "to": 999,
+                "result": {
+                  "text": "EN ALERTA",
+                  "color": "red",
+                  "index": 1
                 }
               }
             }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
           }
-        ]
-      },
-      "fieldConfig": {
-        "defaults": {},
+        },
         "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "/^alertas$/",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "textMode": "value"
       }
     },
     {
-      "id": 2,
-      "type": "stat",
-      "title": "RSSI (ultimo)",
+      "id": 1,
+      "type": "geomap",
+      "title": "Posicion del collar y geocerca",
       "gridPos": {
-        "h": 5,
-        "w": 6,
-        "x": 12,
-        "y": 0
+        "h": 12,
+        "w": 15,
+        "x": 0,
+        "y": 4
       },
       "datasource": {
         "type": "influxdb",
@@ -114,14 +128,73 @@
             "type": "influxdb",
             "uid": "influxdb_ganado"
           },
-          "query": "SELECT last(\"rssi\") FROM \"ganado\"",
+          "query": "SELECT last(\"lat\") AS \"latitude\", last(\"lon\") AS \"longitude\", last(\"fuera_zona\") AS \"fuera\" FROM \"ganado\"",
           "rawQuery": true,
           "resultFormat": "table"
         }
       ],
+      "options": {
+        "view": {
+          "id": "coords",
+          "lat": -41.3292,
+          "lon": -69.5436,
+          "zoom": 14
+        },
+        "controls": {
+          "showZoom": true,
+          "showAttribution": true,
+          "showScale": true
+        },
+        "basemap": {
+          "type": "default",
+          "name": "Layer 0"
+        },
+        "layers": [
+          {
+            "type": "geojson",
+            "name": "Geocerca",
+            "config": {
+              "src": "public/maps/geocerca.geojson?v=jacobacci",
+              "style": {
+                "color": {
+                  "fixed": "green"
+                },
+                "opacity": 0.25,
+                "lineWidth": 3,
+                "size": {
+                  "fixed": 5
+                }
+              }
+            }
+          },
+          {
+            "type": "markers",
+            "name": "Collar",
+            "location": {
+              "mode": "coords",
+              "latitude": "latitude",
+              "longitude": "longitude"
+            },
+            "config": {
+              "style": {
+                "color": {
+                  "field": "fuera",
+                  "fixed": "red"
+                },
+                "size": {
+                  "fixed": 10
+                },
+                "symbol": {
+                  "fixed": "img/icons/marker/circle.svg"
+                },
+                "opacity": 1
+              }
+            }
+          }
+        ]
+      },
       "fieldConfig": {
         "defaults": {
-          "unit": "dBm",
           "color": {
             "mode": "thresholds"
           },
@@ -129,16 +202,62 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "red",
+                "color": "green",
                 "value": null
               },
               {
-                "color": "orange",
-                "value": -110
-              },
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Temperatura actual",
+      "gridPos": {
+        "h": 6,
+        "w": 9,
+        "x": 15,
+        "y": 4
+      },
+      "datasource": {
+        "type": "influxdb",
+        "uid": "influxdb_ganado"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "influxdb_ganado"
+          },
+          "query": "SELECT last(\"temp\") FROM \"ganado\"",
+          "rawQuery": true,
+          "resultFormat": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "celsius",
+          "decimals": 1,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
               {
                 "color": "green",
-                "value": -90
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 39.5
               }
             ]
           }
@@ -149,20 +268,24 @@
         "reduceOptions": {
           "calcs": [
             "lastNotNull"
-          ]
+          ],
+          "values": false
         },
-        "colorMode": "background"
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "textMode": "value"
       }
     },
     {
       "id": 3,
       "type": "stat",
-      "title": "Distancia al centro (m)",
+      "title": "Distancia a la geocerca",
       "gridPos": {
-        "h": 5,
-        "w": 6,
-        "x": 18,
-        "y": 0
+        "h": 6,
+        "w": 9,
+        "x": 15,
+        "y": 10
       },
       "datasource": {
         "type": "influxdb",
@@ -183,6 +306,7 @@
       "fieldConfig": {
         "defaults": {
           "unit": "lengthm",
+          "decimals": 0,
           "color": {
             "mode": "thresholds"
           },
@@ -206,20 +330,24 @@
         "reduceOptions": {
           "calcs": [
             "lastNotNull"
-          ]
+          ],
+          "values": false
         },
-        "colorMode": "background"
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "textMode": "value"
       }
     },
     {
       "id": 4,
       "type": "timeseries",
-      "title": "Temperatura corporal (C)",
+      "title": "Temperatura corporal en el tiempo",
       "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 5
+        "h": 7,
+        "w": 24,
+        "x": 0,
+        "y": 16
       },
       "datasource": {
         "type": "influxdb",
@@ -229,42 +357,48 @@
         "defaults": {
           "custom": {
             "drawStyle": "line",
-            "lineWidth": 1,
-            "fillOpacity": 10,
+            "lineWidth": 2,
+            "fillOpacity": 15,
             "spanNulls": true,
             "pointSize": 5,
             "showPoints": "auto",
             "thresholdsStyle": {
-              "mode": "line"
+              "mode": "off"
             }
           },
           "color": {
             "mode": "palette-classic"
           },
           "unit": "celsius",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "red",
-                "value": 39.5
-              }
+          "decimals": 1
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Umbral" },
+            "properties": [
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } },
+              { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [8, 6] } },
+              { "id": "custom.fillOpacity", "value": 0 },
+              { "id": "custom.lineWidth", "value": 2 },
+              { "id": "custom.showPoints", "value": "never" }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Temperatura" },
+            "properties": [
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "green" } }
             ]
           }
-        },
-        "overrides": []
+        ]
       },
       "options": {
         "legend": {
+          "showLegend": true,
           "displayMode": "list",
           "placement": "bottom"
         },
         "tooltip": {
-          "mode": "single"
+          "mode": "multi"
         }
       },
       "targets": [
@@ -276,19 +410,31 @@
           },
           "query": "SELECT mean(\"temp\") FROM \"ganado\" WHERE $timeFilter GROUP BY time($__interval) fill(none)",
           "rawQuery": true,
-          "resultFormat": "time_series"
+          "resultFormat": "time_series",
+          "alias": "Temperatura"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "influxdb_ganado"
+          },
+          "query": "SELECT mean(\"temp_max\") FROM \"ganado\" WHERE $timeFilter GROUP BY time($__interval) fill(previous)",
+          "rawQuery": true,
+          "resultFormat": "time_series",
+          "alias": "Umbral"
         }
       ]
     },
     {
       "id": 5,
       "type": "timeseries",
-      "title": "Distancia a la geocerca (m)",
+      "title": "Distancia a la geocerca en el tiempo",
       "gridPos": {
-        "h": 8,
-        "w": 12,
+        "h": 7,
+        "w": 24,
         "x": 0,
-        "y": 10
+        "y": 23
       },
       "datasource": {
         "type": "influxdb",
@@ -298,8 +444,8 @@
         "defaults": {
           "custom": {
             "drawStyle": "line",
-            "lineWidth": 1,
-            "fillOpacity": 10,
+            "lineWidth": 2,
+            "fillOpacity": 15,
             "spanNulls": true,
             "pointSize": 5,
             "showPoints": "auto",
@@ -311,6 +457,9 @@
             "mode": "palette-classic"
           },
           "unit": "lengthm",
+          "decimals": 0,
+          "min": 0,
+          "max": 1000,
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -329,6 +478,7 @@
       },
       "options": {
         "legend": {
+          "showLegend": false,
           "displayMode": "list",
           "placement": "bottom"
         },
@@ -345,112 +495,127 @@
           },
           "query": "SELECT mean(\"dist_m\") FROM \"ganado\" WHERE $timeFilter GROUP BY time($__interval) fill(none)",
           "rawQuery": true,
-          "resultFormat": "time_series"
+          "resultFormat": "time_series",
+          "alias": "Distancia"
         }
       ]
     },
     {
-      "id": 6,
-      "type": "timeseries",
-      "title": "Movimiento (desvio de gravedad, m/s2)",
+      "id": 100,
+      "type": "row",
+      "title": "Enlace y diagnostico",
+      "collapsed": true,
       "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 13
-      },
-      "datasource": {
-        "type": "influxdb",
-        "uid": "influxdb_ganado"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "custom": {
-            "drawStyle": "line",
-            "lineWidth": 1,
-            "fillOpacity": 10,
-            "spanNulls": true,
-            "pointSize": 5,
-            "showPoints": "auto"
-          },
-          "color": {
-            "mode": "palette-classic"
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom"
-        },
-        "tooltip": {
-          "mode": "single"
-        }
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "influxdb",
-            "uid": "influxdb_ganado"
-          },
-          "query": "SELECT mean(\"movimiento\") FROM \"ganado\" WHERE $timeFilter GROUP BY time($__interval) fill(none)",
-          "rawQuery": true,
-          "resultFormat": "time_series"
-        }
-      ]
-    },
-    {
-      "id": 7,
-      "type": "timeseries",
-      "title": "RSSI del enlace (dBm)",
-      "gridPos": {
-        "h": 8,
-        "w": 12,
+        "h": 1,
+        "w": 24,
         "x": 0,
-        "y": 18
+        "y": 30
       },
-      "datasource": {
-        "type": "influxdb",
-        "uid": "influxdb_ganado"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "custom": {
-            "drawStyle": "line",
-            "lineWidth": 1,
-            "fillOpacity": 10,
-            "spanNulls": true,
-            "pointSize": 5,
-            "showPoints": "auto"
-          },
-          "color": {
-            "mode": "palette-classic"
-          },
-          "unit": "dBm"
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom"
-        },
-        "tooltip": {
-          "mode": "single"
-        }
-      },
-      "targets": [
+      "panels": [
         {
-          "refId": "A",
+          "id": 6,
+          "type": "timeseries",
+          "title": "Movimiento (desvio de gravedad, m/s2)",
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 31
+          },
           "datasource": {
             "type": "influxdb",
             "uid": "influxdb_ganado"
           },
-          "query": "SELECT mean(\"rssi\") FROM \"ganado\" WHERE $timeFilter GROUP BY time($__interval) fill(none)",
-          "rawQuery": true,
-          "resultFormat": "time_series"
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "drawStyle": "line",
+                "lineWidth": 1,
+                "fillOpacity": 10,
+                "spanNulls": true,
+                "pointSize": 5,
+                "showPoints": "auto"
+              },
+              "color": {
+                "mode": "palette-classic"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "single"
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "influxdb",
+                "uid": "influxdb_ganado"
+              },
+              "query": "SELECT mean(\"movimiento\") FROM \"ganado\" WHERE $timeFilter GROUP BY time($__interval) fill(none)",
+              "rawQuery": true,
+              "resultFormat": "time_series"
+            }
+          ]
+        },
+        {
+          "id": 7,
+          "type": "timeseries",
+          "title": "RSSI del enlace (dBm)",
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 31
+          },
+          "datasource": {
+            "type": "influxdb",
+            "uid": "influxdb_ganado"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "drawStyle": "line",
+                "lineWidth": 1,
+                "fillOpacity": 10,
+                "spanNulls": true,
+                "pointSize": 5,
+                "showPoints": "auto"
+              },
+              "color": {
+                "mode": "palette-classic"
+              },
+              "unit": "dBm"
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "single"
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "influxdb",
+                "uid": "influxdb_ganado"
+              },
+              "query": "SELECT mean(\"rssi\") FROM \"ganado\" WHERE $timeFilter GROUP BY time($__interval) fill(none)",
+              "rawQuery": true,
+              "resultFormat": "time_series"
+            }
+          ]
         }
       ]
     }
