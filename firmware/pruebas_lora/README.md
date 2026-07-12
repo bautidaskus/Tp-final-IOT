@@ -30,11 +30,28 @@ Prueba **collar → base → PC → Node-RED → Grafana** sin depender de GPS/M
 | Heltec V3 | `../collar_sim_heltec/` | Mismo CSV que el collar real, pero con datos **simulados**. |
 | LoRa32u4 | `../base_lora32u4/` (el de siempre) | Sin cambios: recibe y reenvía por USB. |
 
-El collar simulado reproduce el mismo escenario que `pc/serial_bridge.py --sim`
-(recorrido que sale de la geocerca, pico de fiebre en seq 20–25, inactividad en
-seq 8–14), así que en Grafana se ven las **tres alertas**. Levantar el stack de la
-PC como indica `INSTRUCCIONES_PRUEBA.md` (secciones 4.1–4.4) y correr el puente con
-`--port` (la base envía datos reales por USB, no hace falta `--sim`).
+El collar simulado corre un **guion cíclico** de 35 paquetes (~3 min a 5 s por
+paquete) que recorre el estado normal y las tres alertas, y vuelve a empezar:
+
+| Paquetes | Qué pasa | Qué se ve en Grafana |
+|---|---|---|
+| 0–7 | dentro de la geocerca, con movimiento | tablero en verde |
+| 8–14 | quieto (solo gravedad) | alerta de **inactividad** |
+| 15–26 | se aleja y cruza el radio de 500 m | alerta de **fuera de zona** |
+| 20–25 | pico de fiebre (mientras sigue afuera) | alerta de **temperatura** |
+| 27–34 | vuelve a la zona y se normaliza | el tablero vuelve a verde |
+
+Es un guion **acelerado a propósito**: el animal se desplaza más rápido de lo real
+para que las tres alertas entren en una demo de pocos minutos.
+
+> ⚠️ El centro de la geocerca del sketch (`CENTRO_LAT`/`CENTRO_LON`) **debe coincidir**
+> con el de Node-RED (`pc/nodered/logica_collar.js`) y con el círculo del mapa
+> (`pc/grafana/geocerca.geojson`). Si no coinciden, el animal aparece siempre fuera
+> de zona y el tablero queda en alerta permanente.
+
+Levantar el stack de la PC como indica `INSTRUCCIONES_PRUEBA.md` (secciones 4.1–4.4)
+y correr el puente con `--port` (la base envía datos reales por USB, no hace falta
+`--sim`).
 
 ## Después
 

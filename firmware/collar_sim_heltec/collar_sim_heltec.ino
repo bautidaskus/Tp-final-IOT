@@ -9,11 +9,19 @@
  * ni los sensores conectados. La estacion base (base_lora32u4.ino) NO cambia:
  * recibe este paquete igual que el del collar real.
  *
- * El guion simulado reproduce el mismo escenario que pc/serial_bridge.py --sim,
- * asi Grafana muestra las tres alertas:
- *   - recorrido que arranca en la geocerca (-41.130, -71.310) y sale ~seq 15,
- *   - pico de fiebre en seq 20..25,
- *   - inactividad (solo gravedad) en seq 8..14.
+ * El guion simulado es CICLICO (35 paquetes, ~3 min a 5 s por paquete) y recorre
+ * el estado normal y las tres alertas, para que la demo en vivo siempre las
+ * muestre sin tener que reiniciar la placa:
+ *   seq  0..7  : dentro de la geocerca y con movimiento  -> tablero en verde
+ *   seq  8..14 : quieto (solo gravedad)                  -> alerta de inactividad
+ *   seq 15..25 : se aleja y cruza el radio de 500 m      -> alerta de fuera de zona
+ *   seq 20..25 : pico de fiebre (mientras sigue afuera)  -> alerta de temperatura
+ *   seq 26..34 : vuelve a la zona y se normaliza         -> el tablero vuelve a verde
+ *
+ * IMPORTANTE: el centro de la geocerca debe coincidir con el de Node-RED
+ * (pc/nodered/logica_collar.js) y con el circulo del mapa de Grafana
+ * (pc/grafana/geocerca.geojson). Si no coinciden, el animal aparece siempre
+ * fuera de zona y el tablero queda en alerta permanente.
  *
  * Formato del paquete (CSV, identico al collar real):
  *   seq,lat,lon,sats,tempC,ax,ay,az
@@ -46,9 +54,24 @@ const float   TCXO_V     = 1.8;     // Heltec V3
 
 #define PIN_LED     35              // LED on-board del Heltec V3
 
-// ----------------- Escenario simulado (mismo que serial_bridge.py --sim) -------
-const float CENTRO_LAT = -41.130;   // centro de la geocerca (igual que Node-RED)
-const float CENTRO_LON = -71.310;
+// ----------------- Escenario simulado -----------------------------------------
+// Centro de la geocerca: IGUAL que en pc/nodered/logica_collar.js.
+const float CENTRO_LAT = -41.3292;   // Ingeniero Jacobacci, Rio Negro
+const float CENTRO_LON = -69.5436;
+
+// Tramos del ciclo (en paquetes). Ver el encabezado del archivo.
+const uint16_t CICLO      = 35;
+const uint16_t QUIETO_INI = 8,  QUIETO_FIN = 14;   // sin movimiento
+const uint16_t FUERA_INI  = 15, FUERA_FIN  = 25;   // afuera de la geocerca
+const uint16_t FIEBRE_INI = 20, FIEBRE_FIN = 25;   // pico de temperatura
+
+const float RADIO_PASEO = 250.0;    // deambula dentro de este radio (geocerca: 500 m)
+const float RADIO_FUERA = 900.0;    // hasta donde se aleja durante el evento
+const float PASO_M      = 180.0;    // avance maximo por paquete
+const float RUMBO_FUERA = 0.7854;   // 45 grados (noreste): rumbo del alejamiento
+
+// Posicion actual del animal, como offset en metros respecto del centro.
+float posX = 0.0, posY = 0.0;
 
 // ----------------- Timing -----------------
 const unsigned long PERIODO_MS = 5000;
@@ -67,21 +90,53 @@ float randf(float a, float b) {
   return a + (float)random(0, 10001) / 10000.0 * (b - a);
 }
 
-// El animal se desplaza hacia el sureste; a partir de seq~15 sale de la zona.
-float simLat(uint16_t s) { return CENTRO_LAT - 0.0008 * s; }
-float simLon(uint16_t s) { return CENTRO_LON + 0.0008 * s; }
-uint32_t simSats(uint16_t s) { return random(6, 12); }   // 6..11
+// Tramo del ciclo al que corresponde este paquete.
+uint16_t fase(uint16_t s)   { return s % CICLO; }
+bool quieto(uint16_t c)     { return c >= QUIETO_INI && c <= QUIETO_FIN; }
+bool fueraDeZona(uint16_t c){ return c >= FUERA_INI  && c <= FUERA_FIN; }
+bool fiebre(uint16_t c)     { return c >= FIEBRE_INI && c <= FIEBRE_FIN; }
 
-// Temperatura corporal ~38.5 C, con pico de fiebre en seq 20..25.
-float simTemp(uint16_t s) {
-  float fiebre = (s >= 20 && s <= 25) ? 2.0 : 0.0;
-  return 38.5 + fiebre + randf(-0.2, 0.2);
+// Posicion: el animal camina hacia un objetivo (lejos de la zona durante el
+// evento, el centro el resto del tiempo). Cuando esta dentro, deambula.
+void simPos(uint16_t c, float &lat, float &lon) {
+  float objX = 0.0, objY = 0.0;
+  if (fueraDeZona(c)) {
+    objX = RADIO_FUERA * cos(RUMBO_FUERA);
+    objY = RADIO_FUERA * sin(RUMBO_FUERA);
+  }
+
+  posX += constrain(objX - posX, -PASO_M, PASO_M);
+  posY += constrain(objY - posY, -PASO_M, PASO_M);
+
+  // Solo deambula una vez que volvio al radio de paseo (si viene de afuera,
+  // primero tiene que terminar de acercarse al centro).
+  if (!fueraDeZona(c) && sqrt(posX * posX + posY * posY) <= RADIO_PASEO) {
+    posX += randf(-40.0, 40.0);
+    posY += randf(-40.0, 40.0);
+    float r = sqrt(posX * posX + posY * posY);
+    if (r > RADIO_PASEO) {
+      posX *= RADIO_PASEO / r;
+      posY *= RADIO_PASEO / r;
+    }
+  }
+
+  const float M_POR_GRADO_LAT = 111320.0;
+  const float M_POR_GRADO_LON = 111320.0 * cos(radians(CENTRO_LAT));
+  lat = CENTRO_LAT + posY / M_POR_GRADO_LAT;
+  lon = CENTRO_LON + posX / M_POR_GRADO_LON;
 }
 
-// Aceleracion: normalmente hay movimiento; entre seq 8 y 14 el animal esta quieto
-// (solo gravedad) -> dispara la alerta de inactividad.
-void simAccel(uint16_t s, float &ax, float &ay, float &az) {
-  if (s >= 8 && s <= 14) {
+uint32_t simSats(uint16_t c) { return random(6, 12); }   // 6..11
+
+// Temperatura corporal ~38.5 C, con pico de fiebre durante su tramo.
+float simTemp(uint16_t c) {
+  return 38.5 + (fiebre(c) ? 2.0 : 0.0) + randf(-0.2, 0.2);
+}
+
+// Aceleracion: normalmente hay movimiento; en el tramo de inactividad solo se
+// mide la gravedad -> Node-RED dispara la alerta.
+void simAccel(uint16_t c, float &ax, float &ay, float &az) {
+  if (quieto(c)) {
     ax = 0.05; ay = 0.02; az = 9.79;
   } else {
     ax = randf(-2.0, 2.0);
@@ -117,12 +172,14 @@ void setup() {
 }
 
 void enviarPaquete() {
-  float lat = simLat(seq);
-  float lon = simLon(seq);
-  uint32_t sats = simSats(seq);
-  float tempC = simTemp(seq);
+  uint16_t c = fase(seq);
+
+  float lat, lon;
+  simPos(c, lat, lon);
+  uint32_t sats = simSats(c);
+  float tempC = simTemp(c);
   float ax, ay, az;
-  simAccel(seq, ax, ay, az);
+  simAccel(c, ax, ay, az);
 
   char payload[96];
   snprintf(payload, sizeof(payload), "%u,%.6f,%.6f,%lu,%.2f,%.2f,%.2f,%.2f",
