@@ -105,7 +105,7 @@ Instalar todas estas:
 
 Con ambos cargados, abrir el **Monitor Serie de la base a 115200 baudios**:
 deberían aparecer líneas como
-`5,-41.130000,-71.310000,8,38.50,0.10,0.05,9.79,-92,7.5`.
+`5,-41.329200,-69.543600,8,38.50,0.10,0.05,9.79,-92,7.5`.
 Eso confirma que el enlace LoRa funciona.
 
 ---
@@ -144,37 +144,58 @@ distancia a la geocerca, movimiento y RSSI del enlace.
 
 ---
 
-## 5. Probar SIN hardware (modo simulación)
+## 5. Modos de prueba
 
-Sirve para validar todo el pipeline de la PC antes de tener las placas, o para la
-demo si falla el hardware:
+El sistema se puede correr en tres configuraciones, según qué hardware haya
+disponible. **Las tres usan el mismo stack de PC** (secciones 4.1–4.4).
+
+| | Firmware del collar | Enlace LoRa | Sensores | Puente |
+|---|---|---|---|---|
+| **A. Todo real** | `collar_heltec` | real | reales (GPS/MPU/DS18B20) | `--port COM3` |
+| **B. Sensores simulados** | `collar_sim_heltec` | **real** | simulados por código | `--port COM3` |
+| **C. Sin hardware** | — (no hay placas) | — | simulados en la PC | `--sim` |
+
+El **modo B** permite validar todo el pipeline —incluido el enlace de radio, con
+RSSI y SNR reales— sin depender de que el GPS tenga fix ni de tener los sensores
+cableados. La consigna de la materia lo permite explícitamente: *"En caso de no
+contar con sensores específicos, se permite la simulación mediante entradas
+analógicas, pulsadores o funciones en el código"*.
+
+El **modo C** no usa las placas: el RSSI y el SNR son valores generados, **no
+medidos**. Sirve para probar el stack de la PC o como respaldo si falla el hardware,
+pero no es evidencia del enlace de radio.
 
 ```bash
 docker compose up -d
 # importar el flow en Node-RED y Deploy (paso 4.2)
 py serial_bridge.py --sim
 ```
-El script genera un recorrido que **sale de la geocerca**, con un **pico de fiebre**
-y un **período de inactividad**, así se ven las tres alertas en Grafana y en el
-topic `ganado/collar/alertas`.
+
+En modo C se levanta además un **mini-panel** en <http://localhost:8000> que permite
+disparar a mano los eventos (**salir de la zona**, **fiebre**, **inactividad**; duran
+60 s y vuelven solos) y **ajustar los umbrales en vivo**: se publican por MQTT en
+`ganado/config` y Node-RED los toma sin reiniciar.
 
 ---
 
 ## 6. Ajustar la geocerca y los umbrales
 
-Están al principio del nodo `function` de Node-RED (archivo de referencia
-`pc/nodered/logica_collar.js`):
+La geocerca está al principio del nodo `function` de Node-RED (archivo de
+referencia `pc/nodered/logica_collar.js`):
 
 ```js
-const CENTRO_LAT = -41.130;   // centro de la zona permitida
-const CENTRO_LON = -71.310;
+const CENTRO_LAT = -41.3292;  // Ingeniero Jacobacci, Rio Negro
+const CENTRO_LON = -69.5436;
 const RADIO_M    = 500;       // radio en metros
-const TEMP_MAX   = 39.5;      // umbral de fiebre (C)
-const MOV_MIN    = 0.5;       // umbral de movimiento
-const INACT_MS   = 15000;     // tiempo sin movimiento => inactividad
 ```
-Cambiar **CENTRO_LAT/LON por la ubicación real** de la prueba, editar el nodo
-function y hacer **Deploy** de nuevo.
+Los umbrales (`TEMP_MAX` 39,5 °C · `MOV_MIN` 0,5 · `INACT_MS` 15000 ms) tienen esos
+valores por defecto, pero se pisan en vivo desde el panel del modo C.
+
+> ⚠️ Si cambiás el centro, hay que cambiarlo en **tres lugares** o el tablero queda
+> en alerta permanente (el animal aparece fuera de zona siempre):
+> 1. `pc/nodered/logica_collar.js` (el nodo function) → **Deploy** de nuevo;
+> 2. `firmware/collar_sim_heltec/collar_sim_heltec.ino` (`CENTRO_LAT`/`CENTRO_LON`);
+> 3. `pc/grafana/geocerca.geojson` (el círculo que dibuja el mapa).
 
 ---
 
