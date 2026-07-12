@@ -4,13 +4,17 @@
 //
 // CSV de entrada:  seq,lat,lon,sats,tempC,ax,ay,az,rssi,snr
 
-// ---- Parametros de la aplicacion (ajustables) ----
-const CENTRO_LAT = -41.130;   // centro de la geocerca (Bariloche)
-const CENTRO_LON = -71.310;
+// ---- Geocerca (constante; para cambiarla se edita aca y se regenera el
+//      circulo del mapa con pc/grafana/geocerca.geojson). ----
+const CENTRO_LAT = -41.3292;  // Ingeniero Jacobacci, Rio Negro
+const CENTRO_LON = -69.5436;
 const RADIO_M    = 500;       // radio de la geocerca en metros
-const TEMP_MAX   = 39.5;      // umbral de fiebre (C)
-const MOV_MIN    = 0.5;       // m/s^2 de desvio sobre gravedad para considerar "movimiento"
-const INACT_MS   = 15000;     // sin movimiento por mas de esto => inactividad
+
+// ---- Umbrales configurables en vivo desde el panel (topic ganado/config).
+//      Si todavia no llego config, se usan estos valores por defecto. ----
+const TEMP_MAX = flow.get("TEMP_MAX") ?? 39.5;      // umbral de fiebre (C)
+const MOV_MIN  = flow.get("MOV_MIN")  ?? 0.5;        // m/s^2 sobre gravedad = "movimiento"
+const INACT_MS = flow.get("INACT_MS") ?? 15000;     // sin movimiento por mas de esto => inactividad
 
 function haversine(lat1, lon1, lat2, lon2) {
   const R = 6371000;
@@ -77,6 +81,7 @@ const campos = [
   `fuera_zona=${fueraZona}i`,
   `alerta_temp=${alertaTemp}i`,
   `inactivo=${inactivo}i`,
+  `temp_max=${TEMP_MAX}`,       // umbral vigente, para graficarlo como linea dinamica
 ].join(",");
 
 const msgInflux = {
