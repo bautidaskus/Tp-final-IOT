@@ -518,7 +518,7 @@
           "title": "Movimiento (desvio de gravedad, m/s2)",
           "gridPos": {
             "h": 8,
-            "w": 12,
+            "w": 8,
             "x": 0,
             "y": 31
           },
@@ -570,8 +570,8 @@
           "title": "RSSI del enlace (dBm)",
           "gridPos": {
             "h": 8,
-            "w": 12,
-            "x": 12,
+            "w": 8,
+            "x": 8,
             "y": 31
           },
           "datasource": {
@@ -612,6 +612,59 @@
                 "uid": "influxdb_ganado"
               },
               "query": "SELECT mean(\"rssi\") FROM \"ganado\" WHERE $timeFilter GROUP BY time($__interval) fill(none)",
+              "rawQuery": true,
+              "resultFormat": "time_series"
+            }
+          ]
+        },
+        {
+          "id": 8,
+          "type": "timeseries",
+          "title": "SNR del enlace (dB)",
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 16,
+            "y": 31
+          },
+          "datasource": {
+            "type": "influxdb",
+            "uid": "influxdb_ganado"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "drawStyle": "line",
+                "lineWidth": 1,
+                "fillOpacity": 10,
+                "spanNulls": true,
+                "pointSize": 5,
+                "showPoints": "auto"
+              },
+              "color": {
+                "mode": "palette-classic"
+              },
+              "unit": "dB"
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "single"
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "influxdb",
+                "uid": "influxdb_ganado"
+              },
+              "query": "SELECT mean(\"snr\") FROM \"ganado\" WHERE $timeFilter GROUP BY time($__interval) fill(none)",
               "rawQuery": true,
               "resultFormat": "time_series"
             }
