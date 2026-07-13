@@ -171,10 +171,16 @@ docker compose up -d
 py serial_bridge.py --sim
 ```
 
-En modo C se levanta además un **mini-panel** en <http://localhost:8000> que permite
-disparar a mano los eventos (**salir de la zona**, **fiebre**, **inactividad**; duran
-60 s y vuelven solos) y **ajustar los umbrales en vivo**: se publican por MQTT en
-`ganado/config` y Node-RED los toma sin reiniciar.
+En **ambos modos** (B y C) el puente levanta un **panel de control** en
+<http://localhost:8000> que permite disparar a mano los eventos (**salir de la zona**,
+**fiebre**, **inactividad**; duran 60 s y vuelven solos) y **ajustar los umbrales en
+vivo** (se publican por MQTT en `ganado/config` y Node-RED los toma sin reiniciar).
+
+- En **modo B** el collar transmite siempre valores normales (dentro de la zona,
+  temperatura normal, con movimiento); cuando disparás un evento, el puente
+  **sobreescribe los campos del paquete real** que llega del collar, así la alerta
+  aparece a demanda sobre datos que igual viajaron por LoRa (RSSI/SNR reales).
+- En **modo C** no hay collar: el propio puente genera el dato ya deformado.
 
 ---
 
