@@ -14,12 +14,16 @@ Node-RED corre en Docker y en Windows no puede acceder al puerto COM; por eso
 este puente corre nativo en el host y publica al broker Mosquitto expuesto en
 localhost:1883.
 
-Modo simulacion (--sim): el animal pasea DENTRO de la geocerca con temperatura
-normal. Un mini-panel web (http://localhost:8000) permite, sin hardware:
-  - simular por tiempo acotado que el animal sale de la zona / tiene fiebre / se
-    queda quieto (asi se ven las alertas en vivo; vuelven solas a los 60 s), y
+Panel de control (http://localhost:8000, disponible en AMBOS modos) permite:
+  - inducir por tiempo acotado que el animal sale de la zona / tiene fiebre / se
+    queda quieto (asi se ven las alertas en vivo; vuelven solas a los 60 s). En
+    --sim se genera el dato ya deformado; con hardware real se sobreescriben los
+    campos del paquete que llega del collar (ver aplicar_eventos_a_linea), y
   - ajustar en vivo los umbrales de temperatura y movimiento (se publican por
     MQTT en 'ganado/config' y Node-RED los toma sin reiniciar).
+
+Modo simulacion (--sim): ademas genera datos (el animal pasea DENTRO de la
+geocerca con temperatura normal) sin necesidad de hardware.
 
 Uso:
     py serial_bridge.py --port COM3                 # hardware real
@@ -102,6 +106,30 @@ def _clamp(v, lo, hi):
     return max(lo, min(hi, v))
 
 
+def aplicar_eventos_a_linea(linea):
+    """Modo serial (con hardware): sobreescribe campos del CSV real segun los
+    eventos activos del panel, para inducir alertas a demanda sobre los datos
+    reales del collar. Sin eventos activos, devuelve la linea intacta.
+
+    CSV:  seq,lat,lon,sats,tempC,ax,ay,az,rssi,snr"""
+    ahora = time.time()
+    campos = linea.split(",")
+    if len(campos) < 8:
+        return linea
+    if ahora < eventos["fuera"]:
+        objx = RADIO_FUERA * math.cos(BEARING_FUERA)
+        objy = RADIO_FUERA * math.sin(BEARING_FUERA)
+        lat = CENTRO_LAT + objy / 111320.0
+        lon = CENTRO_LON + objx / (111320.0 * math.cos(math.radians(CENTRO_LAT)))
+        campos[1] = f"{lat:.6f}"
+        campos[2] = f"{lon:.6f}"
+    if ahora < eventos["fiebre"]:
+        campos[4] = f"{38.5 + 2.0:.2f}"
+    if ahora < eventos["inactividad"]:
+        campos[5], campos[6], campos[7] = "0.05", "0.02", "9.79"   # solo gravedad
+    return ",".join(campos)
+
+
 def paso_simulado(seq):
     """Genera el siguiente paquete CSV. Por defecto el animal deambula dentro de
     la geocerca; los eventos activos (por boton) lo sacan de zona, le suben la
@@ -178,8 +206,8 @@ PAGINA = """<!doctype html>
   #cfgmsg { color:#2e7d46; font-size:13px; margin-left:10px; }
 </style></head>
 <body>
-  <h1>Simulación del collar</h1>
-  <p class="nota">Sin hardware conectado. Sirve para probar las alertas del tablero.</p>
+  <h1>Panel de control del collar</h1>
+  <p class="nota">Induce alertas en el tablero a demanda (funciona con o sin hardware).</p>
 
   <h2>Eventos</h2>
   <div class="fila">
@@ -291,8 +319,6 @@ def iniciar_panel():
 
 def run_sim(client, topic):
     print("[bridge] MODO SIMULACION (sin hardware). Ctrl+C para cortar.")
-    iniciar_panel()
-    publicar_config()   # deja los umbrales por defecto disponibles para Node-RED
     seq = 0
     while True:
         linea = paso_simulado(seq)
@@ -322,6 +348,7 @@ def run_serial(client, topic, port, baud):
             if not linea[0].isdigit():
                 print(f"[base] {linea}")   # mensajes de arranque de la base
                 continue
+            linea = aplicar_eventos_a_linea(linea)   # eventos del panel, si hay
             client.publish(topic, linea)
             print(f"[rx] {linea}")
 
@@ -329,6 +356,8 @@ def run_serial(client, topic, port, baud):
 def main():
     args = parse_args()
     client = conectar_mqtt(args.mqtt_host, args.mqtt_port)
+    iniciar_panel()     # panel de control disponible en ambos modos
+    publicar_config()   # deja los umbrales por defecto disponibles para Node-RED
     try:
         if args.sim:
             run_sim(client, args.topic)

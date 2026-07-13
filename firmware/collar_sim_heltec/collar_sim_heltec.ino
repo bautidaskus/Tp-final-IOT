@@ -9,14 +9,10 @@
  * ni los sensores conectados. La estacion base (base_lora32u4.ino) NO cambia:
  * recibe este paquete igual que el del collar real.
  *
- * El guion simulado es CICLICO (35 paquetes, ~3 min a 5 s por paquete) y recorre
- * el estado normal y las tres alertas, para que la demo en vivo siempre las
- * muestre sin tener que reiniciar la placa:
- *   seq  0..7  : dentro de la geocerca y con movimiento  -> tablero en verde
- *   seq  8..14 : quieto (solo gravedad)                  -> alerta de inactividad
- *   seq 15..25 : se aleja y cruza el radio de 500 m      -> alerta de fuera de zona
- *   seq 20..25 : pico de fiebre (mientras sigue afuera)  -> alerta de temperatura
- *   seq 26..34 : vuelve a la zona y se normaliza         -> el tablero vuelve a verde
+ * Sin guion fijo: el animal se mantiene SIEMPRE en valores normales (dentro de
+ * la geocerca de Ingeniero Jacobacci, temperatura normal, con movimiento). Las
+ * alertas (fuera de zona / fiebre / inactividad) se inducen a demanda desde el
+ * panel de pc/serial_bridge.py, que sobreescribe los campos del paquete real.
  *
  * IMPORTANTE: el centro de la geocerca debe coincidir con el de Node-RED
  * (pc/nodered/logica_collar.js) y con el circulo del mapa de Grafana
@@ -59,20 +55,6 @@ const float   TCXO_V     = 1.8;     // Heltec V3
 const float CENTRO_LAT = -41.3292;   // Ingeniero Jacobacci, Rio Negro
 const float CENTRO_LON = -69.5436;
 
-// Tramos del ciclo (en paquetes). Ver el encabezado del archivo.
-const uint16_t CICLO      = 35;
-const uint16_t QUIETO_INI = 8,  QUIETO_FIN = 14;   // sin movimiento
-const uint16_t FUERA_INI  = 15, FUERA_FIN  = 25;   // afuera de la geocerca
-const uint16_t FIEBRE_INI = 20, FIEBRE_FIN = 25;   // pico de temperatura
-
-const float RADIO_PASEO = 250.0;    // deambula dentro de este radio (geocerca: 500 m)
-const float RADIO_FUERA = 900.0;    // hasta donde se aleja durante el evento
-const float PASO_M      = 180.0;    // avance maximo por paquete
-const float RUMBO_FUERA = 0.7854;   // 45 grados (noreste): rumbo del alejamiento
-
-// Posicion actual del animal, como offset en metros respecto del centro.
-float posX = 0.0, posY = 0.0;
-
 // ----------------- Timing -----------------
 const unsigned long PERIODO_MS = 5000;
 unsigned long nextSendAt = 0;
@@ -90,59 +72,22 @@ float randf(float a, float b) {
   return a + (float)random(0, 10001) / 10000.0 * (b - a);
 }
 
-// Tramo del ciclo al que corresponde este paquete.
-uint16_t fase(uint16_t s)   { return s % CICLO; }
-bool quieto(uint16_t c)     { return c >= QUIETO_INI && c <= QUIETO_FIN; }
-bool fueraDeZona(uint16_t c){ return c >= FUERA_INI  && c <= FUERA_FIN; }
-bool fiebre(uint16_t c)     { return c >= FIEBRE_INI && c <= FIEBRE_FIN; }
+// El animal deambula SIEMPRE dentro de la zona: jitter de +-120 m alrededor del
+// centro (siempre bajo el radio de 500 m de la geocerca).
+float simLat(uint16_t s) { return CENTRO_LAT + randf(-120, 120) / 111320.0; }
+float simLon(uint16_t s) { return CENTRO_LON + randf(-120, 120) / (111320.0 * cos(radians(CENTRO_LAT))); }
+uint32_t simSats(uint16_t s) { return random(6, 12); }   // 6..11
 
-// Posicion: el animal camina hacia un objetivo (lejos de la zona durante el
-// evento, el centro el resto del tiempo). Cuando esta dentro, deambula.
-void simPos(uint16_t c, float &lat, float &lon) {
-  float objX = 0.0, objY = 0.0;
-  if (fueraDeZona(c)) {
-    objX = RADIO_FUERA * cos(RUMBO_FUERA);
-    objY = RADIO_FUERA * sin(RUMBO_FUERA);
-  }
-
-  posX += constrain(objX - posX, -PASO_M, PASO_M);
-  posY += constrain(objY - posY, -PASO_M, PASO_M);
-
-  // Solo deambula una vez que volvio al radio de paseo (si viene de afuera,
-  // primero tiene que terminar de acercarse al centro).
-  if (!fueraDeZona(c) && sqrt(posX * posX + posY * posY) <= RADIO_PASEO) {
-    posX += randf(-40.0, 40.0);
-    posY += randf(-40.0, 40.0);
-    float r = sqrt(posX * posX + posY * posY);
-    if (r > RADIO_PASEO) {
-      posX *= RADIO_PASEO / r;
-      posY *= RADIO_PASEO / r;
-    }
-  }
-
-  const float M_POR_GRADO_LAT = 111320.0;
-  const float M_POR_GRADO_LON = 111320.0 * cos(radians(CENTRO_LAT));
-  lat = CENTRO_LAT + posY / M_POR_GRADO_LAT;
-  lon = CENTRO_LON + posX / M_POR_GRADO_LON;
+// Temperatura corporal normal ~38.5 C (la fiebre se induce desde el panel).
+float simTemp(uint16_t s) {
+  return 38.5 + randf(-0.2, 0.2);
 }
 
-uint32_t simSats(uint16_t c) { return random(6, 12); }   // 6..11
-
-// Temperatura corporal ~38.5 C, con pico de fiebre durante su tramo.
-float simTemp(uint16_t c) {
-  return 38.5 + (fiebre(c) ? 2.0 : 0.0) + randf(-0.2, 0.2);
-}
-
-// Aceleracion: normalmente hay movimiento; en el tramo de inactividad solo se
-// mide la gravedad -> Node-RED dispara la alerta.
-void simAccel(uint16_t c, float &ax, float &ay, float &az) {
-  if (quieto(c)) {
-    ax = 0.05; ay = 0.02; az = 9.79;
-  } else {
-    ax = randf(-2.0, 2.0);
-    ay = randf(-2.0, 2.0);
-    az = 9.8 + randf(-1.5, 1.5);
-  }
+// Aceleracion: siempre hay movimiento (la inactividad se induce desde el panel).
+void simAccel(uint16_t s, float &ax, float &ay, float &az) {
+  ax = randf(-2.0, 2.0);
+  ay = randf(-2.0, 2.0);
+  az = 9.8 + randf(-1.5, 1.5);
 }
 
 void setup() {
@@ -172,14 +117,12 @@ void setup() {
 }
 
 void enviarPaquete() {
-  uint16_t c = fase(seq);
-
-  float lat, lon;
-  simPos(c, lat, lon);
-  uint32_t sats = simSats(c);
-  float tempC = simTemp(c);
+  float lat = simLat(seq);
+  float lon = simLon(seq);
+  uint32_t sats = simSats(seq);
+  float tempC = simTemp(seq);
   float ax, ay, az;
-  simAccel(c, ax, ay, az);
+  simAccel(seq, ax, ay, az);
 
   char payload[96];
   snprintf(payload, sizeof(payload), "%u,%.6f,%.6f,%lu,%.2f,%.2f,%.2f,%.2f",
