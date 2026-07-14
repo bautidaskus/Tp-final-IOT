@@ -1,0 +1,146 @@
+[
+  {
+    "id": "f_ganado",
+    "type": "tab",
+    "label": "Ganado LoRa",
+    "disabled": false,
+    "info": ""
+  },
+  {
+    "id": "b_local",
+    "type": "mqtt-broker",
+    "name": "Mosquitto local",
+    "broker": "mqtt",
+    "port": "1883",
+    "clientid": "",
+    "autoConnect": true,
+    "keepalive": "60",
+    "cleansession": true
+  },
+  {
+    "id": "n_in",
+    "type": "mqtt in",
+    "z": "f_ganado",
+    "name": "collar/raw",
+    "topic": "ganado/collar/raw",
+    "qos": "0",
+    "datatype": "utf8",
+    "broker": "b_local",
+    "x": 130,
+    "y": 120,
+    "wires": [
+      [
+        "n_fn"
+      ]
+    ]
+  },
+  {
+    "id": "n_fn",
+    "type": "function",
+    "z": "f_ganado",
+    "name": "parse + geocerca + alertas",
+    "func": "// Nodo \"function\" de Node-RED: parsea el CSV del collar, calcula geocerca y\n// alertas, y arma la linea de InfluxDB (salida 1) + un mensaje de alerta MQTT\n// opcional (salida 2).\n//\n// CSV de entrada:  seq,lat,lon,sats,tempC,ax,ay,az,rssi,snr\n\n// ---- Geocerca (constante; para cambiarla se edita aca y se regenera el\n//      circulo del mapa con pc/grafana/geocerca.geojson). ----\nconst CENTRO_LAT = -41.3292;  // Ingeniero Jacobacci, Rio Negro\nconst CENTRO_LON = -69.5436;\nconst RADIO_M    = 500;       // radio de la geocerca en metros\n\n// ---- Umbrales configurables en vivo desde el panel (topic ganado/config).\n//      Si todavia no llego config, se usan estos valores por defecto. ----\nconst TEMP_MAX = flow.get(\"TEMP_MAX\") ?? 39.5;      // umbral de fiebre (C)\nconst MOV_MIN  = flow.get(\"MOV_MIN\")  ?? 0.5;        // m/s^2 sobre gravedad = \"movimiento\"\nconst INACT_MS = flow.get(\"INACT_MS\") ?? 15000;     // sin movimiento por mas de esto => inactividad\n\nfunction haversine(lat1, lon1, lat2, lon2) {\n  const R = 6371000;\n  const toRad = (d) => d * Math.PI / 180;\n  const dLat = toRad(lat2 - lat1);\n  const dLon = toRad(lon2 - lon1);\n  const a = Math.sin(dLat / 2) ** 2 +\n            Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;\n  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));\n}\n\nconst linea = String(msg.payload).trim();\nconst p = linea.split(\",\");\nif (p.length < 10) {\n  node.warn(\"Paquete incompleto: \" + linea);\n  return null;\n}\n\nconst seq  = parseInt(p[0], 10);\nconst lat  = parseFloat(p[1]);\nconst lon  = parseFloat(p[2]);\nconst sats = parseInt(p[3], 10);\nconst temp = parseFloat(p[4]);\nconst ax   = parseFloat(p[5]);\nconst ay   = parseFloat(p[6]);\nconst az   = parseFloat(p[7]);\nconst rssi = parseInt(p[8], 10);\nconst snr  = parseFloat(p[9]);\n\nconst tieneFix = sats > 0 && (lat !== 0 || lon !== 0);\n\n// --- Geocerca ---\nlet dist = 0;\nlet fueraZona = 0;\nif (tieneFix) {\n  dist = haversine(CENTRO_LAT, CENTRO_LON, lat, lon);\n  fueraZona = dist > RADIO_M ? 1 : 0;\n}\n\n// --- Temperatura ---\nconst alertaTemp = (temp > TEMP_MAX && temp > -100) ? 1 : 0;\n\n// --- Inactividad (usa contexto de flujo para medir tiempo sin movimiento) ---\nconst movimiento = Math.abs(Math.sqrt(ax * ax + ay * ay + az * az) - 9.8);\nconst ahora = Date.now();\nlet ultimoMov = flow.get(\"ultimoMov\") || ahora;\nif (movimiento >= MOV_MIN) {\n  ultimoMov = ahora;\n  flow.set(\"ultimoMov\", ultimoMov);\n}\nconst inactivo = (ahora - ultimoMov) > INACT_MS ? 1 : 0;\n\n// --- Salida 1: linea de InfluxDB (line protocol) ---\nconst campos = [\n  `lat=${lat}`,\n  `lon=${lon}`,\n  `sats=${sats}i`,\n  `temp=${temp}`,\n  `ax=${ax}`, `ay=${ay}`, `az=${az}`,\n  `rssi=${rssi}i`,\n  `snr=${snr}`,\n  `movimiento=${movimiento.toFixed(3)}`,\n  `dist_m=${dist.toFixed(1)}`,\n  `fuera_zona=${fueraZona}i`,\n  `alerta_temp=${alertaTemp}i`,\n  `inactivo=${inactivo}i`,\n  `temp_max=${TEMP_MAX}`,       // umbral vigente, para graficarlo como linea dinamica\n].join(\",\");\n\nconst msgInflux = {\n  headers: { \"Content-Type\": \"text/plain\" },\n  payload: `ganado,device=collar01 ${campos}`,\n};\n\n// --- Salida 2: alerta MQTT (solo si hay alguna condicion activa) ---\nlet msgAlerta = null;\nconst motivos = [];\nif (fueraZona)  motivos.push(`fuera de zona (${dist.toFixed(0)} m)`);\nif (alertaTemp) motivos.push(`temperatura alta (${temp} C)`);\nif (inactivo)   motivos.push(\"inactividad prolongada\");\nif (motivos.length > 0) {\n  msgAlerta = {\n    topic: \"ganado/collar/alertas\",\n    payload: JSON.stringify({ seq, lat, lon, temp, motivos }),\n  };\n  node.status({ fill: \"red\", shape: \"dot\", text: motivos.join(\" | \") });\n} else {\n  node.status({ fill: \"green\", shape: \"dot\", text: `ok seq ${seq}` });\n}\n\nreturn [msgInflux, msgAlerta];\n",
+    "outputs": 2,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "x": 380,
+    "y": 120,
+    "wires": [
+      [
+        "n_http",
+        "n_dbg_influx"
+      ],
+      [
+        "n_alert",
+        "n_dbg_alert"
+      ]
+    ]
+  },
+  {
+    "id": "n_http",
+    "type": "http request",
+    "z": "f_ganado",
+    "name": "InfluxDB write",
+    "method": "POST",
+    "ret": "txt",
+    "paytoqs": "ignore",
+    "url": "http://influxdb:8086/write?db=iot",
+    "persist": false,
+    "x": 660,
+    "y": 100,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "n_alert",
+    "type": "mqtt out",
+    "z": "f_ganado",
+    "name": "collar/alertas",
+    "topic": "ganado/collar/alertas",
+    "qos": "0",
+    "retain": "",
+    "broker": "b_local",
+    "x": 660,
+    "y": 160,
+    "wires": []
+  },
+  {
+    "id": "n_dbg_influx",
+    "type": "debug",
+    "z": "f_ganado",
+    "name": "linea influx",
+    "active": true,
+    "console": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 660,
+    "y": 60,
+    "wires": []
+  },
+  {
+    "id": "n_dbg_alert",
+    "type": "debug",
+    "z": "f_ganado",
+    "name": "alerta",
+    "active": true,
+    "console": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 660,
+    "y": 220,
+    "wires": []
+  },
+  {
+    "id": "n_cfg_in",
+    "type": "mqtt in",
+    "z": "f_ganado",
+    "name": "config",
+    "topic": "ganado/config",
+    "qos": "0",
+    "datatype": "utf8",
+    "broker": "b_local",
+    "x": 130,
+    "y": 240,
+    "wires": [
+      [
+        "n_cfg"
+      ]
+    ]
+  },
+  {
+    "id": "n_cfg",
+    "type": "function",
+    "z": "f_ganado",
+    "name": "guardar umbrales",
+    "func": "let cfg = msg.payload;\nif (typeof cfg === \"string\") { try { cfg = JSON.parse(cfg); } catch (e) { node.warn(\"config invalida: \" + cfg); return null; } }\nif (cfg.temp_max !== undefined) flow.set(\"TEMP_MAX\", Number(cfg.temp_max));\nif (cfg.mov_min  !== undefined) flow.set(\"MOV_MIN\",  Number(cfg.mov_min));\nif (cfg.inact_ms !== undefined) flow.set(\"INACT_MS\", Number(cfg.inact_ms));\nnode.status({ fill: \"blue\", shape: \"dot\", text: `T=${cfg.temp_max} M=${cfg.mov_min} I=${cfg.inact_ms}ms` });\nreturn null;\n",
+    "outputs": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "x": 360,
+    "y": 240,
+    "wires": []
+  }
+]

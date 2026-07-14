@@ -1,0 +1,51 @@
+services:
+  mqtt:
+    container_name: ganado-mqtt
+    image: eclipse-mosquitto:latest
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./mosquitto/config:/mosquitto/config
+      - mosquitto-data:/mosquitto/data
+
+  influxdb:
+    container_name: ganado-influxdb
+    image: influxdb:1.8
+    ports:
+      - "8086:8086"
+    volumes:
+      - influxdb-data:/var/lib/influxdb
+    environment:
+      - INFLUXDB_DB=iot
+
+  nodered:
+    container_name: ganado-nodered
+    image: nodered/node-red:latest
+    ports:
+      - "1880:1880"
+    volumes:
+      - nodered-data:/data
+    depends_on:
+      - mqtt
+      - influxdb
+
+  grafana:
+    container_name: ganado-grafana
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning
+      - ./grafana/geocerca.geojson:/usr/share/grafana/public/maps/geocerca.geojson:ro
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    depends_on:
+      - influxdb
+
+volumes:
+  mosquitto-data:
+  influxdb-data:
+  nodered-data:
+  grafana-data:
